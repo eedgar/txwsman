@@ -1,0 +1,41 @@
+#! /bin/sh
+
+##############################################################################
+#
+# Copyright (C) Zenoss, Inc. 2013, all rights reserved.
+#
+# This content is made available according to terms specified in the LICENSE
+# file at the top-level directory of this package.
+#
+##############################################################################
+
+(
+    set -x
+    flake8 --ignore=E122,E123,E501 txwinrm
+) || (
+    echo
+    echo "ERROR: Code does not conform to PEP-8"
+    exit 1
+) || exit 1
+
+echo
+
+(
+    set -x
+    txwinrm/test/cover --fail-under=50
+) || (
+    echo
+    echo "ERROR: Less than 50% unit test coverage"
+    exit 1
+) || exit 1
+
+echo
+
+(
+    set -x
+    txwinrm/test/complex
+) || (
+    echo
+    echo "ERROR: Code is too complex"
+    exit 1
+) || exit 1
