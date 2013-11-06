@@ -14,9 +14,11 @@ from collections import namedtuple
 from twisted.internet import reactor, defer
 from twisted.web.http_headers import Headers
 from xml.etree import cElementTree as ET
+from lxml import etree, objectify
+from cStringIO import StringIO
 
-_CONTENT_TYPE = {'Content-Type': ['application/soap+xml;charset=UTF-8']}
-_REQUEST_TEMPLATE_NAMES = ('identify', 'enumerate')
+_CONTENT_TYPE = {'Content-Type': ['application/soap+xml;charset=utf-8']}
+_REQUEST_TEMPLATE_NAMES = ('identify', 'enumerate', 'pull')
 _REQUEST_TEMPLATES = {}
 _REQUEST_TEMPLATE_DIR = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), 'request')
@@ -70,7 +72,7 @@ def _get_basic_auth_header(conn_info):
 def _get_url_and_headers(conn_info):
     url = "{c.scheme}://{c.hostname}:{c.port}/wsman".format(c=conn_info)
     headers = Headers(_CONTENT_TYPE)
-    headers.addRawHeader('Connection', conn_info.connectiontype)
+    headers.addRawHeader('Accept', '*/*')
     if conn_info.auth_type == 'basic':
         headers.addRawHeader(
             'Authorization', _get_basic_auth_header(conn_info))
@@ -86,8 +88,10 @@ def _get_request_template(name):
     if name not in _REQUEST_TEMPLATES:
         path = os.path.join(_REQUEST_TEMPLATE_DIR, '{0}.xml'.format(name))
         with open(path) as f:
-            _REQUEST_TEMPLATES[name] = \
-                _XML_WHITESPACE_PATTERN.sub('><', f.read()).strip()
+            _REQUEST_TEMPLATES[name] = "".join(f.read().strip().splitlines())
+            #_REQUEST_TEMPLATES[name] = \
+            #   _XML_WHITESPACE_PATTERN.sub('><', f.read()).strip()
+            
     return _REQUEST_TEMPLATES[name]
 
 class _StringProducer(object):
@@ -136,6 +140,14 @@ class RequestSender(object):
 
         yield self._set_url_and_headers()
         request = _get_request_template(request_template_name).format(**kwargs)
+        if log.isEnabledFor(logging.DEBUG):
+            try:
+                #import xml.dom.minidom
+                #xml = xml.dom.minidom.parseString(request)
+                #log.debug(xml.toprettyxml())
+                log.debug(request)
+            except:
+                log.debug('Could not prettify response XML: "{0}"'.format(request))
         body_producer = _StringProducer(request)
         response = yield _get_agent().request('POST', self._url, self._headers, body_producer)
         log.debug('received response {0} {1}'.format(
@@ -170,13 +182,13 @@ if __name__ == '__main__':
 
     @defer.inlineCallbacks
     def main():
-        hostname = 'z2'
+        hostname = '10.100.40.178'
         auth_type = 'basic'
-        username = 'eedgar'
-        password = 'zenoss'
+        username = 'root'
+        password = 'calvin'
         connectiontype = 'Keep-Alive'
         scheme = 'https'
-        port = '5986'
+        port = '443'
         keytab = ''
 
         conn_info = ConnectionInfo(
@@ -190,15 +202,43 @@ if __name__ == '__main__':
                   keytab,)
         s=create_request_sender(conn_info)
         resp = yield s.send_request('enumerate',
-                                    uuid=str(uuid.uuid4()),resource_uri='https://z2:5986/wsman')
+                                    uuid=str(uuid.uuid4()),resource_uri='https://10.100.40.178:443/wsman')
+         
         proto = _StringProtocol()
         resp.deliverBody(proto)
         xml_str = yield proto.d
+        tree = etree.parse(StringIO(xml_str))
+        xml_str = etree.tostring(tree,pretty_print=True)
+        try:
+            log.debug(xml_str)
+            #import xml.dom.minidom
+            #xml = xml.dom.minidom.parseString(xml_str)
+            #log.debug(xml.toprettyxml())
+        except:
+            log.debug('Could not prettify response XML: "{0}"'.format(xml_str))
+        resp_tree = etree.parse(StringIO(xml_str))
+
+        # Strip the namespaces
+        root=resp_tree.getroot()
+        for elem in root.getiterator():
+            i = elem.tag.find('}')
+            if i >= 0:
+               elem.tag = elem.tag[i+1:]
+        context = resp_tree.xpath('//EnumerationContext/text()')[0]       
+        #orig_uuid = resp_tree.xpath('//RelatesTo/text()')[0]
+        resp = yield s.send_request('pull',
+                                    uuid=str(uuid.uuid4()),resource_uri='https://10.100.40.178:443/wsman', context=context)
+        proto = _StringProtocol()
+        resp.deliverBody(proto)
+        xml_str = yield proto.d
+        tree = etree.parse(StringIO(xml_str))
+        xml_str = etree.tostring(tree,pretty_print=True)
         if log.isEnabledFor(logging.DEBUG):
             try:
-                import xml.dom.minidom
-                xml = xml.dom.minidom.parseString(xml_str)
-                log.debug(xml.toprettyxml())
+                log.debug(xml_str)
+                #import xml.dom.minidom
+                #xml = xml.dom.minidom.parseString(xml_str)
+                #log.debug(xml.toprettyxml())
             except:
                 log.debug('Could not prettify response XML: "{0}"'.format(xml_str))
         stop_reactor()
