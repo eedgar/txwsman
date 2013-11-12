@@ -25,7 +25,7 @@ WSENUM_ENUMERATION_CONTEXT = 'EnumerationContext'
 WSENUM_END_OF_SEQUENCE = 'EndOfSequence'
 WSENUM_ITEMS = 'Items'
 
-WMICIMV2 = 'http://schemas.microsoft.com/wbem/wsman/1/wmi/root/cimv2'
+DEFAULT_RESOURCE_URI = 'http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/'
 
 SHELL_SIGNAL_TERMINATE = \
     'http://schemas.microsoft.com/wbem/wsman/1/windows/shell/signal/terminate'

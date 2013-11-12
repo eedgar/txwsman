@@ -27,6 +27,7 @@ attributes of the returned item objects follow these rules
 """
 
 import logging
+import uuid
 from cStringIO import StringIO
 from collections import deque
 from pprint import pformat
@@ -44,13 +45,12 @@ except ImportError:
 from . import constants as c
 from .util import RequestSender, get_datetime, RequestError
 
-log = logging.getLogger('zen.winrm')
+log = logging.getLogger('zen.wsman')
 _MAX_REQUESTS_PER_ENUMERATION = 9999
-DEFAULT_RESOURCE_URI = '{0}/*'.format(c.WMICIMV2)
 _MARKER = object()
 
 
-class WinrmClient(object):
+class WsmanClient(object):
     """
     Sends enumerate requests to a host running the WinRM service and returns
     a list of items.
@@ -62,21 +62,58 @@ class WinrmClient(object):
         self._hostname = sender.hostname
 
     @defer.inlineCallbacks
-    def enumerate(self, wql, resource_uri=DEFAULT_RESOURCE_URI):
+    def enumerate(self, className, wql=None, mode=None, references=None, 
+                                   namespace=None, ext=False, maxelements=None):
         """
         Runs a remote WQL query.
         """
         request_template_name = 'enumerate'
         enumeration_context = None
         items = []
+        request_uri = yield self._sender.url
+        if namespace:
+           reqselector = "<wsman:SelectorSet>"
+           reqselector = reqselector + '<wsman:Selector Name="__cimnamespace">{}</wsman:Selector>'.format(namespace)
+           reqselector = reqselector + "</wsman:SelectorSet>"
+        else:
+           reqselector = ""
+
+        if mode == 'epr':
+           enumerationmode = "<wsman:EnumerationMode>EnumerateEPR</wsman:EnumerationMode>"
+        elif mode == 'objepr':
+           enumerationmode = "<wsman:EnumerationMode>EnumerateObjectAndEPR</wsman:EnumerationMode>"
+        else:
+           enumerationmode = ""
+    
+        if ext:
+           showext = '<wsman:OptionSet><wsman:Option Name="ShowExtensions"/></wsman:OptionSet>'        
+        else:
+           showext = ''
+   
+        if maxelements:
+           maxelementstr = "<wsman:MaxElements>{}</wsman:MaxElements>".format(maxelements)
+        else:
+           maxelementstr = ''
+
+        if wql:
+           filter = '<wsman:Filter Dialect="http://schemas.dmtf.org/wbem/cql/1/dsp0202.pdf">{}</wsman:Filter>'.format(wql)
+        else:
+           filter = ''
+
         try:
             for i in xrange(_MAX_REQUESTS_PER_ENUMERATION):
                 log.debug('{0} "{1}" {2}'.format(
-                    self._hostname, wql, request_template_name))
+                    self._hostname, className, request_template_name))
                 response = yield self._sender.send_request(
                     request_template_name,
-                    resource_uri=resource_uri,
-                    wql=wql,
+                    request_uri=request_uri,
+                    className=className,
+                    reqselector=reqselector,
+                    showext=showext,
+                    filter=filter,
+                    maxelementstr = maxelementstr,
+                    uuid=str(uuid.uuid4()),
+                    enumerationmode=enumerationmode,
                     enumeration_context=enumeration_context)
                 log.debug("{0} HTTP status: {1}".format(
                     self._hostname, response.code))
@@ -101,12 +138,12 @@ class WinrmClient(object):
         defer.returnValue(items)
 
 
-def create_winrm_client(conn_info):
+def create_wsman_client(conn_info):
     """
-    Constructs a WinRM client with the default response handler.
+    Constructs a WSMAN client with the default response handler.
     """
     sender = RequestSender(conn_info)
-    return WinrmClient(sender, SaxResponseHandler())
+    return WsmanClient(sender, SaxResponseHandler())
 
 
 def create_parser_and_factory():

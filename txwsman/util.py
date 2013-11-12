@@ -4,6 +4,7 @@ import os
 import re
 import base64
 import uuid
+from datetime import datetime
 from twisted.python.log import err
 from twisted.web.client import Agent
 from twisted.internet import reactor
@@ -133,6 +134,16 @@ class RequestSender(object):
     def _set_url_and_headers(self):
         self._url, self._headers = yield _get_url_and_headers(self._conn_info)
 
+    @property
+    def hostname(self):
+        return self._conn_info.hostname
+
+    @property
+    @defer.inlineCallbacks
+    def url(self):
+        yield self._set_url_and_headers()
+        defer.returnValue(self._url)
+
     @defer.inlineCallbacks
     def send_request(self, request_template_name, **kwargs):
         log.debug('sending request: {0} {1}'.format(
@@ -159,6 +170,14 @@ def create_request_sender(conn_info):
     return sender
     #return EtreeRequestSender(sender)
 
+class RequestError(Exception):
+    pass
+class UnauthorizedError(RequestError):
+    pass
+
+def verify_conn_info(conn_info):
+    #TODO fill out
+    pass
 class _StringProtocol(Protocol):
 
     def __init__(self):
@@ -170,6 +189,28 @@ class _StringProtocol(Protocol):
 
     def connectionLost(self, reason):
         self.d.callback(''.join(self._data))
+
+
+ZOFFSET_PATTERN = re.compile(r'[-+]\d+:\d\d$')
+
+
+def get_datetime(text):
+    """
+    Parse the date from a WinRM response and return a datetime object.
+    """
+    text2 = TZOFFSET_PATTERN.sub('Z', text)
+    if text2.endswith('Z'):
+        if '.' in text2:
+            format = "%Y-%m-%dT%H:%M:%S.%fZ"
+            date_string = _NANOSECONDS_PATTERN.sub(r'.\g<1>', text2)
+        else:
+            format = "%Y-%m-%dT%H:%M:%SZ"
+            date_string = text2
+    else:
+        format = '%m/%d/%Y %H:%M:%S.%f'
+        date_string = text2
+    return datetime.strptime(date_string, format)
+
 
 if __name__ == '__main__':
     logging.basicConfig()
@@ -246,4 +287,5 @@ if __name__ == '__main__':
 
     reactor.callWhenRunning(main)
     reactor.run()
+
 

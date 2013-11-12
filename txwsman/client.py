@@ -10,6 +10,7 @@ log = logging.getLogger('zen.wsman.Client')
 log.setLevel(level=logging.DEBUG)
 
 class Client(object):
+
     def __init__(self, hostname, username, password, port, scheme, auth_type):
         self._hostname = hostname
         self._auth_type = auth_type
@@ -29,6 +30,8 @@ class Client(object):
                     self._connectiontype,
                     self._keytab)
 
+        self._url = "{c.scheme}://{c.hostname}:{c.port}/wsman".format(c=self._conn_info)
+
     @defer.inlineCallbacks
     def send_request(self, request, **kwargs):
         s=create_request_sender(self._conn_info)
@@ -46,10 +49,9 @@ class Client(object):
         except:
             log.debug('Could not prettify response XML: "{0}"'.format(xml_str))
 
-        return xml_str
+        defer.returnValue(xml_str)
 
     def find_context(self, xml_str):
-
         resp_tree = etree.parse(StringIO(xml_str))
 
         # Strip the namespaces
@@ -68,16 +70,18 @@ class Client(object):
 
     @defer.inlineCallbacks
     def pull(self, **kwargs):
-
-        url,headers = _get_url_and_headers(self._conn_info)
-
-        results = yield self.send_request('pull', resource_uri=url, **kwargs)
+        results = yield self.send_request('pull', resource_uri=self._url, **kwargs)
         defer.returnValue(results)
 
+    @defer.inlineCallbacks
     def enumerate(self, **kwargs):
-        url, headers = _get_url_and_headers(self._conn_info)
-        results = self.send_request('enumerate', resource_uri=url, **kwargs)
-        return results
+        results = yield self.send_request('enumerate', resource_uri=self._url, **kwargs)
+        context = self.find_context(results)
+        while context:
+            pull = yield self.pull(context=context,**kwargs)
+            context = self.find_context(pull)
+            print pull
+        defer.returnValue(results)
 
 if __name__ == "__main__":
 
@@ -87,6 +91,7 @@ if __name__ == "__main__":
         if reactor.running:
             reactor.stop()
 
+    @defer.inlineCallbacks
     def enumerate_test():
         client = Client('10.100.40.178',
                         'root',
@@ -94,9 +99,8 @@ if __name__ == "__main__":
                         port='443',
                         scheme='https',
                         auth_type='basic')
-        results = client.enumerate(ClassName='DCIM_ComputerSystems')
-        print results
-
+        results = yield client.enumerate(ClassName='DCIM_ComputerSystems')
+        import pdb;pdb.set_trace()
         stop_reactor()
 
     reactor.callWhenRunning(enumerate_test)

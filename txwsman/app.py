@@ -11,15 +11,15 @@ import sys
 import logging
 from getpass import getpass
 from urlparse import urlparse
-from argparse import ArgumentParser
+from argparse import ArgumentParser, SUPPRESS
 from ConfigParser import RawConfigParser
 from twisted.internet import reactor, defer
 from twisted.internet.error import TimeoutError
-from .enumerate import create_winrm_client
+from .enumerate import create_wsman_client
 from .util import ConnectionInfo, verify_conn_info, UnauthorizedError
 
 logging.basicConfig()
-log = logging.getLogger('zen.winrm')
+log = logging.getLogger('zen.wsman')
 _exit_status = 0
 DEFAULT_SCHEME = 'http'
 DEFAULT_PORT = 5985
@@ -83,7 +83,7 @@ def get_initial_wmiprvse_stats(config):
     good_conn_infos = []
     for conn_info in config.conn_infos:
         try:
-            client = create_winrm_client(conn_info)
+            client = create_wsman_client(conn_info)
             initial_wmiprvse_stats[conn_info.hostname] = \
                 yield get_remote_process_stats(client)
             good_conn_infos.append(conn_info)
@@ -121,7 +121,7 @@ class ConfigDrivenUtility(object):
                     results, config, initial_wmiprvse_stats, good_conn_infos)
 
         d = self._strategy.act(good_conn_infos, args, config)
-        d.addCallback(callback)
+        #d.addCallback(callback)
         d.addBoth(stop_reactor)
 
     @defer.inlineCallbacks
@@ -130,7 +130,7 @@ class ConfigDrivenUtility(object):
         global _exit_status
         final_wmiprvse_stats = {}
         for conn_info in good_conn_infos:
-            client = create_winrm_client(conn_info)
+            client = create_wsman_client(conn_info)
             final_wmiprvse_stats[conn_info.hostname] = \
                 yield get_remote_process_stats(client)
         print >>sys.stderr, '\nSummary:'
@@ -162,7 +162,10 @@ class Config(object):
 def _parse_remote(remote):
     url_parts = urlparse(remote)
     if url_parts.netloc:
-        return url_parts.hostname, url_parts.scheme, url_parts.port
+        if not url_parts.port and url_parts.scheme == 'https':
+            return url_parts.hostname, url_parts.scheme, '443'
+        else:
+            return url_parts.hostname, url_parts.scheme, url_parts.port
     return remote, DEFAULT_SCHEME, DEFAULT_PORT
 
 
@@ -180,7 +183,7 @@ def _parse_config_file(filename, utility):
             creds[k1][2] = getpass('{0} password ({1} credentials):'
                                    .format(value, k1))
     conn_infos = []
-    for remote, cred_key in parser.items('remotes'):
+    for cred_key, remote in parser.items('remotes'):
         auth_type, username, password = creds[cred_key]
         hostname, scheme, port = _parse_remote(remote)
         connectiontype = 'Keep-Alive'
@@ -208,17 +211,20 @@ def _parse_config_file(filename, utility):
 def _parse_args(utility):
     parser = ArgumentParser()
     parser.add_argument("--debug", "-d", action="store_true")
-    parser.add_argument("--config", "-c")
-    parser.add_argument("--remote", "-r")
+    parser.add_argument("--remote", "-R")
     parser.add_argument("--authentication", "-a", default='basic',
                         choices=['basic', 'kerberos'])
     parser.add_argument("--username", "-u")
+    # Hide this option, config file loading isnt really supported 
+    # but its too deep to quickly remove
+    parser.add_argument("--config", "-c", help=SUPPRESS)
     utility.add_args(parser)
     args = parser.parse_args()
     if not args.config:
         if not args.remote or not args.username:
-            print >>sys.stderr, "ERROR: You must specify a config file with " \
-                                "-c or specify remote and username"
+            #print >>sys.stderr, "ERROR: You must specify a config file with " \
+            #                    "-c or specify remote and username"
+            print >>sys.stderr, "ERROR: You must specify a remote and username"
             sys.exit(1)
         if not utility.check_args(args):
             sys.exit(1)
@@ -226,9 +232,10 @@ def _parse_args(utility):
             hostname, scheme, port = _parse_remote(args.remote)
             password = getpass()
             connectiontype = 'Keep-Alive'
+            keytab = ''
             args.conn_info = ConnectionInfo(
-                hostname, args.authentication, args.username, password, scheme,
-                port, connectiontype)
+                hostname, str(args.authentication), args.username, password, scheme,
+                port, connectiontype, keytab)
             try:
                 verify_conn_info(args.conn_info)
             except Exception as e:
